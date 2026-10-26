@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, request
+from off_client import OpenFoodFactsError, fetch_by_barcode, is_valid_barcode, search_by_name
 
 import data
 
@@ -23,6 +24,9 @@ def validate_fields(fields, partial=False):
         stock = fields["stock"]
         if isinstance(stock, bool) or not isinstance(stock, int) or stock < 0:
             return "stock must be a non-negative whole number"
+
+        if "barcode" in fields and not isinstance(fields["barcode"], str):
+            return "barcode must be a string"
 
     return None
 
@@ -49,17 +53,32 @@ def get_item(item_id):
 
 @app.route("/inventory", methods=["POST"])
 def create_item():
-    """Add a new item."""
-    fields = request.get_json(silent=True)  # None if body isn't valid JSON
+    """Add a new item. Fetch the details from OpenFoodFacts."""
+    fields = request.get_json(silent=True)
     if fields is None:
         return jsonify({"error": "Request body must be valid JSON"}), 400
+
+    barcode = fields.get("barcode") if isinstance(fields, dict) else None
+    if isinstance(barcode, str) and barcode and not fields.get("product_name"):
+        if not is_valid_barcode(barcode):
+            return jsonify({"error": "barcode must be 8-14 digits"}), 400
+        try:
+            product = fetch_by_barcode(barcode)
+        except OpenFoodFactsError as exc:
+            return jsonify({"error": str(exc)}), 502  # 502 = upstream API failed
+        if product is None:
+            return jsonify({
+                "error": "Product not found on OpenFoodFacts. Provide product_name to add it manually."
+            }), 404
+        # Our own values (price, stock...) win over the API's
+        fields = {**product, **fields}
 
     error = validate_fields(fields)
     if error:
         return jsonify({"error": error}), 400
 
     item = data.add_item(fields)
-    return jsonify(item), 201 
+    return jsonify(item), 201
 
 
 @app.route("/inventory/<int:item_id>", methods=["PATCH"])
@@ -90,6 +109,30 @@ def delete_item(item_id):
     if not data.delete_item(item_id):
         return jsonify({"error": f"Item {item_id} not found"}), 404
     return jsonify({"message": f"Item {item_id} deleted"}), 200
+
+@app.route("/lookup", methods=["GET"])
+def lookup():
+    """Search OpenFoodFacts by barcode or name"""
+    barcode = request.args.get("barcode", "").strip()
+    name = request.args.get("name", "").strip()
+
+    if not barcode and not name:
+        return jsonify({"error": "Provide a barcode or name query parameter"}), 400
+
+    try:
+        if barcode:
+            if not is_valid_barcode(barcode):
+                return jsonify({"error": "barcode must be 8-14 digits"}), 400
+            product = fetch_by_barcode(barcode)
+            results = [product] if product else []
+        else:
+            results = search_by_name(name)
+    except OpenFoodFactsError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    if not results:
+        return jsonify({"error": "No matching products found"}), 404
+    return jsonify({"results": results}), 200
 
 
 # Return JSON error if not.

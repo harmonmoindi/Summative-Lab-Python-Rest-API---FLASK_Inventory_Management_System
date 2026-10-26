@@ -1,5 +1,5 @@
 import copy
-#clients can update this field.
+#clients can update this field. The Id is set automatically as per code. 
 ALLOWED_FIELDS = {
     "barcode", "product_name", "brands", "ingredients_text", "price", "stock",
 }
