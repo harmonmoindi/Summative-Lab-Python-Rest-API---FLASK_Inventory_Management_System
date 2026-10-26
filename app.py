@@ -24,9 +24,9 @@ def validate_fields(fields, partial=False):
         stock = fields["stock"]
         if isinstance(stock, bool) or not isinstance(stock, int) or stock < 0:
             return "stock must be a non-negative whole number"
-
-        if "barcode" in fields and not isinstance(fields["barcode"], str):
-            return "barcode must be a string"
+        
+    if "barcode" in fields and not isinstance(fields["barcode"], str):
+        return "barcode must be a string"
 
     return None
 
